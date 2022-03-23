@@ -1,0 +1,3 @@
+{
+    "startCommand": "npx pnpm install --ignore-scripts && npx pnpm run build"
+}
