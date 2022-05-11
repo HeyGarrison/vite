@@ -94,14 +94,6 @@ export async function resolveHttpServer(
   app: Connect.Server,
   httpsOptions?: HttpsServerOptions
 ): Promise<HttpServer> {
-  /*
-   * Some Node.js packages are known to be using this undocumented function,
-   * notably "compression" middleware.
-   */
-  app.prototype._implicitHeader = function _implicitHeader() {
-    this.writeHead(this.statusCode)
-  }
-
   if (!httpsOptions) {
     return require('http').createServer(app)
   }
@@ -112,6 +104,9 @@ export async function resolveHttpServer(
   } else {
     return require('http2').createSecureServer(
       {
+        // Manually increase the session memory to prevent 502 ENHANCE_YOUR_CALM
+        // errors on large numbers of requests
+        maxSessionMemory: 1000,
         ...httpsOptions,
         allowHTTP1: true
       },

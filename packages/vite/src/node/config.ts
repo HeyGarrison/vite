@@ -31,7 +31,7 @@ import { createLogger } from './logger'
 import type { DepOptimizationOptions } from './optimizer'
 import { createFilter } from '@rollup/pluginutils'
 import type { ResolvedBuildOptions } from '.'
-import { parse as parseUrl } from 'url'
+import { parse as parseUrl, pathToFileURL } from 'url'
 import type { JsonOptions } from './plugins/json'
 import type { PluginContainer } from './server/pluginContainer'
 import { createPluginContainer } from './server/pluginContainer'
@@ -63,7 +63,7 @@ export function defineConfig(config: UserConfigExport): UserConfigExport {
   return config
 }
 
-export type PluginOption = Plugin | false | null | undefined
+export type PluginOption = Plugin | false | null | undefined | PluginOption[]
 
 export interface UserConfig {
   /**
@@ -109,7 +109,7 @@ export interface UserConfig {
   /**
    * Array of vite plugins to use.
    */
-  plugins?: (PluginOption | PluginOption[])[]
+  plugins?: PluginOption[]
   /**
    * Configure resolver
    */
@@ -153,6 +153,14 @@ export interface UserConfig {
    */
   ssr?: SSROptions
   /**
+   * Experimental features
+   *
+   * Features under this field are addressed to be changed that might NOT follow semver.
+   * Please be careful and always pin Vite's version when using them.
+   * @experimental
+   */
+  experimental?: ExperimentalOptions
+  /**
    * Log level.
    * Default: 'info'
    */
@@ -177,17 +185,6 @@ export interface UserConfig {
    */
   envPrefix?: string | string[]
   /**
-   * Import aliases
-   * @deprecated use `resolve.alias` instead
-   */
-  alias?: AliasOptions
-  /**
-   * Force Vite to always resolve listed dependencies to the same copy (from
-   * project root).
-   * @deprecated use `resolve.dedupe` instead
-   */
-  dedupe?: string[]
-  /**
    * Worker bundle options
    */
   worker?: {
@@ -199,7 +196,7 @@ export interface UserConfig {
     /**
      * Vite plugins that apply to worker bundle
      */
-    plugins?: (PluginOption | PluginOption[])[]
+    plugins?: PluginOption[]
     /**
      * Rollup options to build worker bundle
      */
@@ -208,6 +205,16 @@ export interface UserConfig {
       'plugins' | 'input' | 'onwarn' | 'preserveEntrySignatures'
     >
   }
+}
+
+export interface ExperimentalOptions {
+  /**
+   * Append fake `&lang.(ext)` when queries are specified, to preseve the file extension for following plugins to process.
+   *
+   * @experimental
+   * @default false
+   */
+  importGlobRestoreExtension?: boolean
 }
 
 export type SSRTarget = 'node' | 'webworker'
@@ -235,10 +242,7 @@ export interface InlineConfig extends UserConfig {
 }
 
 export type ResolvedConfig = Readonly<
-  Omit<
-    UserConfig,
-    'plugins' | 'alias' | 'dedupe' | 'assetsInclude' | 'optimizeDeps' | 'worker'
-  > & {
+  Omit<UserConfig, 'plugins' | 'assetsInclude' | 'optimizeDeps' | 'worker'> & {
     configFile: string | undefined
     configFileDependencies: string[]
     inlineConfig: InlineConfig
@@ -248,6 +252,7 @@ export type ResolvedConfig = Readonly<
     cacheDir: string
     command: 'build' | 'serve'
     mode: string
+    isWorker: boolean
     isProduction: boolean
     env: Record<string, any>
     resolve: ResolveOptions & {
@@ -260,7 +265,7 @@ export type ResolvedConfig = Readonly<
     assetsInclude: (file: string) => boolean
     logger: Logger
     createResolver: (options?: Partial<InternalResolveOptions>) => ResolveFn
-    optimizeDeps: Omit<DepOptimizationOptions, 'keepNames'>
+    optimizeDeps: DepOptimizationOptions
     /** @internal */
     packageCache: PackageCache
     worker: ResolveWorkerOptions
@@ -321,7 +326,7 @@ export async function resolveConfig(
   configEnv.mode = mode
 
   // resolve plugins
-  const rawUserPlugins = (config.plugins || []).flat().filter((p) => {
+  const rawUserPlugins = (config.plugins || []).flat(Infinity).filter((p) => {
     if (!p) {
       return false
     } else if (!p.apply) {
@@ -369,12 +374,11 @@ export async function resolveConfig(
       // @ts-ignore because @rollup/plugin-alias' type doesn't allow function
       // replacement, but its implementation does work with function values.
       clientAlias,
-      config.resolve?.alias || config.alias || []
+      config.resolve?.alias || []
     )
   )
 
   const resolveOptions: ResolvedConfig['resolve'] = {
-    dedupe: config.dedupe,
     ...config.resolve,
     alias: resolvedAlias
   }
@@ -401,11 +405,7 @@ export async function resolveConfig(
   const resolvedBuildOptions = resolveBuildOptions(config.build)
 
   // resolve cache directory
-  const pkgPath = lookupFile(
-    resolvedRoot,
-    [`package.json`],
-    true /* pathOnly */
-  )
+  const pkgPath = lookupFile(resolvedRoot, [`package.json`], { pathOnly: true })
   const cacheDir = config.cacheDir
     ? path.resolve(resolvedRoot, config.cacheDir)
     : pkgPath
@@ -464,12 +464,16 @@ export async function resolveConfig(
         )
       : ''
 
-  const server = resolveServerOptions(resolvedRoot, config.server)
+  const server = resolveServerOptions(resolvedRoot, config.server, logger)
+
+  const optimizeDeps = config.optimizeDeps || {}
 
   const resolved: ResolvedConfig = {
     ...config,
     configFile: configFile ? normalizePath(configFile) : undefined,
-    configFileDependencies,
+    configFileDependencies: configFileDependencies.map((name) =>
+      normalizePath(path.resolve(name))
+    ),
     inlineConfig,
     root: resolvedRoot,
     base: BASE_URL,
@@ -478,6 +482,7 @@ export async function resolveConfig(
     cacheDir,
     command,
     mode,
+    isWorker: false,
     isProduction,
     plugins: userPlugins,
     server,
@@ -497,11 +502,10 @@ export async function resolveConfig(
     packageCache: new Map(),
     createResolver,
     optimizeDeps: {
-      ...config.optimizeDeps,
+      ...optimizeDeps,
       esbuildOptions: {
-        keepNames: config.optimizeDeps?.keepNames,
         preserveSymlinks: config.resolve?.preserveSymlinks,
-        ...config.optimizeDeps?.esbuildOptions
+        ...optimizeDeps.esbuildOptions
       }
     },
     worker: resolvedWorkerOptions
@@ -510,7 +514,7 @@ export async function resolveConfig(
   // flat config.worker.plugin
   const [workerPrePlugins, workerNormalPlugins, workerPostPlugins] =
     sortUserPlugins(config.worker?.plugins as Plugin[])
-  const workerResolved = { ...resolved }
+  const workerResolved: ResolvedConfig = { ...resolved, isWorker: true }
   resolved.worker.plugins = await resolvePlugins(
     workerResolved,
     workerPrePlugins,
@@ -536,117 +540,6 @@ export async function resolveConfig(
       ...resolved,
       plugins: resolved.plugins.map((p) => p.name)
     })
-  }
-
-  // TODO Deprecation warnings - remove when out of beta
-
-  const logDeprecationWarning = (
-    deprecatedOption: string,
-    hint: string,
-    error?: Error
-  ) => {
-    logger.warn(
-      colors.yellow(
-        colors.bold(
-          `(!) "${deprecatedOption}" option is deprecated. ${hint}${
-            error ? `\n${error.stack}` : ''
-          }`
-        )
-      )
-    )
-  }
-
-  if (config.build?.base) {
-    logDeprecationWarning(
-      'build.base',
-      '"base" is now a root-level config option.'
-    )
-    config.base = config.build.base
-  }
-  Object.defineProperty(resolvedBuildOptions, 'base', {
-    enumerable: false,
-    get() {
-      logDeprecationWarning(
-        'build.base',
-        '"base" is now a root-level config option.',
-        new Error()
-      )
-      return resolved.base
-    }
-  })
-
-  if (config.alias) {
-    logDeprecationWarning('alias', 'Use "resolve.alias" instead.')
-  }
-  Object.defineProperty(resolved, 'alias', {
-    enumerable: false,
-    get() {
-      logDeprecationWarning(
-        'alias',
-        'Use "resolve.alias" instead.',
-        new Error()
-      )
-      return resolved.resolve.alias
-    }
-  })
-
-  if (config.dedupe) {
-    logDeprecationWarning('dedupe', 'Use "resolve.dedupe" instead.')
-  }
-  Object.defineProperty(resolved, 'dedupe', {
-    enumerable: false,
-    get() {
-      logDeprecationWarning(
-        'dedupe',
-        'Use "resolve.dedupe" instead.',
-        new Error()
-      )
-      return resolved.resolve.dedupe
-    }
-  })
-
-  if (config.optimizeDeps?.keepNames) {
-    logDeprecationWarning(
-      'optimizeDeps.keepNames',
-      'Use "optimizeDeps.esbuildOptions.keepNames" instead.'
-    )
-  }
-  Object.defineProperty(resolved.optimizeDeps, 'keepNames', {
-    enumerable: false,
-    get() {
-      logDeprecationWarning(
-        'optimizeDeps.keepNames',
-        'Use "optimizeDeps.esbuildOptions.keepNames" instead.',
-        new Error()
-      )
-      return resolved.optimizeDeps.esbuildOptions?.keepNames
-    }
-  })
-
-  if (config.build?.polyfillDynamicImport) {
-    logDeprecationWarning(
-      'build.polyfillDynamicImport',
-      '"polyfillDynamicImport" has been removed. Please use @vitejs/plugin-legacy if your target browsers do not support dynamic imports.'
-    )
-  }
-
-  Object.defineProperty(resolvedBuildOptions, 'polyfillDynamicImport', {
-    enumerable: false,
-    get() {
-      logDeprecationWarning(
-        'build.polyfillDynamicImport',
-        '"polyfillDynamicImport" has been removed. Please use @vitejs/plugin-legacy if your target browsers do not support dynamic imports.',
-        new Error()
-      )
-      return false
-    }
-  })
-
-  if (config.build?.cleanCssOptions) {
-    logDeprecationWarning(
-      'build.cleanCssOptions',
-      'Vite now uses esbuild for CSS minification.'
-    )
   }
 
   if (config.build?.terserOptions && config.build.minify !== 'terser') {
@@ -743,7 +636,12 @@ function mergeConfigRecursively(
     } else if (key === 'assetsInclude' && rootPath === '') {
       merged[key] = [].concat(existing, value)
       continue
-    } else if (key === 'noExternal' && existing === true) {
+    } else if (
+      key === 'noExternal' &&
+      rootPath === 'ssr' &&
+      (existing === true || value === true)
+    ) {
+      merged[key] = true
       continue
     }
 
@@ -1006,7 +904,7 @@ async function bundleConfigFile(
               contents: contents
                 .replace(
                   /\bimport\.meta\.url\b/g,
-                  JSON.stringify(`file://${args.path}`)
+                  JSON.stringify(pathToFileURL(args.path).href)
                 )
                 .replace(
                   /\b__dirname\b/g,
@@ -1083,7 +981,7 @@ export function loadEnv(
   }
 
   for (const file of envFiles) {
-    const path = lookupFile(envDir, [file], true)
+    const path = lookupFile(envDir, [file], { pathOnly: true, rootDir: envDir })
     if (path) {
       const parsed = dotenv.parse(fs.readFileSync(path), {
         debug: process.env.DEBUG?.includes('vite:dotenv') || undefined
