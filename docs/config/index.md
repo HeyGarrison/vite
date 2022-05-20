@@ -477,7 +477,7 @@ export default defineConfig(({ command, mode }) => {
 ### server.port
 
 - **Type:** `number`
-- **Default:** `3000`
+- **Default:** `5173`
 
   Specify server port. Note if the port is already being used, Vite will automatically try the next available port so this may not be the actual port the server ends up listening on.
 
@@ -551,7 +551,7 @@ export default defineConfig(({ command, mode }) => {
         },
         // Proxying websockets or socket.io
         '/socket.io': {
-          target: 'ws://localhost:3000',
+          target: 'ws://localhost:5173',
           ws: true
         }
       }
@@ -741,11 +741,11 @@ export default defineConfig({
 - **Default:** `'modules'`
 - **Related:** [Browser Compatibility](/guide/build#browser-compatibility)
 
-  Browser compatibility target for the final bundle. The default value is a Vite special value, `'modules'`, which targets [browsers with native ES module support](https://caniuse.com/es6-module).
+  Browser compatibility target for the final bundle. The default value is a Vite special value, `'modules'`, which targets browsers with [native ES Modules](https://caniuse.com/es6-module) and [native ESM dynamic import](https://caniuse.com/es6-module-dynamic-import) support.
 
   Another special value is `'esnext'` - which assumes native dynamic imports support and will transpile as little as possible:
 
-  - If the [`build.minify`](#build-minify) option is `'terser'`, `'esnext'` will be forced down to `'es2019'`.
+  - If the [`build.minify`](#build-minify) option is `'terser'`, `'esnext'` will be forced down to `'es2021'`.
   - In other cases, it will perform no transpilation at all.
 
   The transform is performed with esbuild and the value should be a valid [esbuild target option](https://esbuild.github.io/api/#target). Custom targets can either be a ES version (e.g. `es2015`), a browser with version (e.g. `chrome58`), or an array of multiple target strings.
@@ -838,6 +838,7 @@ export default defineConfig({
 ### build.dynamicImportVarsOptions
 
 - **Type:** [`RollupDynamicImportVarsOptions`](https://github.com/rollup/plugins/tree/master/packages/dynamic-import-vars#options)
+- **Related:** [Dynamic Import](/guide/features#dynamic-import)
 
   Options to pass on to [@rollup/plugin-dynamic-import-vars](https://github.com/rollup/plugins/tree/master/packages/dynamic-import-vars).
 

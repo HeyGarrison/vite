@@ -1,40 +1,40 @@
 import fs from 'fs'
 import path from 'path'
 import colors from 'picocolors'
-import type { InlineConfig, ResolvedConfig } from './config'
-import { resolveConfig } from './config'
 import type {
+  ExternalOption,
+  ModuleFormat,
+  OutputOptions,
   Plugin,
   RollupBuild,
-  RollupOptions,
-  RollupWarning,
-  WarningHandler,
-  OutputOptions,
-  RollupOutput,
-  ExternalOption,
-  WatcherOptions,
-  RollupWatcher,
   RollupError,
-  ModuleFormat
+  RollupOptions,
+  RollupOutput,
+  RollupWarning,
+  RollupWatcher,
+  WarningHandler,
+  WatcherOptions
 } from 'rollup'
 import type Rollup from 'rollup'
-import { buildReporterPlugin } from './plugins/reporter'
-import { buildEsbuildPlugin } from './plugins/esbuild'
-import { terserPlugin } from './plugins/terser'
 import type { Terser } from 'types/terser'
-import { copyDir, emptyDir, lookupFile, normalizePath } from './utils'
-import { manifestPlugin } from './plugins/manifest'
 import commonjsPlugin from '@rollup/plugin-commonjs'
 import type { RollupCommonJSOptions } from 'types/commonjs'
 import type { RollupDynamicImportVarsOptions } from 'types/dynamicImportVars'
-import type { Logger } from './logger'
 import type { TransformOptions } from 'esbuild'
+import type { InlineConfig, ResolvedConfig } from './config'
+import { resolveConfig } from './config'
+import { buildReporterPlugin } from './plugins/reporter'
+import { buildEsbuildPlugin } from './plugins/esbuild'
+import { terserPlugin } from './plugins/terser'
+import { copyDir, emptyDir, lookupFile, normalizePath } from './utils'
+import { manifestPlugin } from './plugins/manifest'
+import type { Logger } from './logger'
 import { dataURIPlugin } from './plugins/dataUri'
 import { buildImportAnalysisPlugin } from './plugins/importAnalysisBuild'
 import { resolveSSRExternal, shouldExternalizeForSSR } from './ssr/ssrExternal'
 import { ssrManifestPlugin } from './ssr/ssrManifestPlugin'
 import type { DepOptimizationMetadata } from './optimizer'
-import { getDepsCacheDir, findKnownImports } from './optimizer'
+import { findKnownImports, getDepsCacheDir } from './optimizer'
 import { assetImportMetaUrlPlugin } from './plugins/assetImportMetaUrl'
 import { loadFallbackPlugin } from './plugins/loadFallback'
 import type { PackageData } from './packages'
@@ -245,15 +245,15 @@ export function resolveBuildOptions(raw?: BuildOptions): ResolvedBuildOptions {
     // Support browserslist
     // "defaults and supports es6-module and supports es6-module-dynamic-import",
     resolved.target = [
-      'es2019',
+      'es2020', // support import.meta.url
       'edge88',
       'firefox78',
       'chrome87',
-      'safari13.1'
+      'safari13' // transpile nullish coalescing
     ]
   } else if (resolved.target === 'esnext' && resolved.minify === 'terser') {
-    // esnext + terser: limit to es2019 so it can be minified by terser
-    resolved.target = 'es2019'
+    // esnext + terser: limit to es2021 so it can be minified by terser
+    resolved.target = 'es2021'
   }
 
   if (!resolved.cssTarget) {
@@ -389,7 +389,6 @@ async function doBuild(
     )
   }
 
-  const rollup = require('rollup') as typeof Rollup
   const rollupOptions: RollupOptions = {
     input,
     context: 'globalThis',
@@ -427,13 +426,14 @@ async function doBuild(
         exports: ssr ? 'named' : 'auto',
         sourcemap: options.sourcemap,
         name: libOptions ? libOptions.name : undefined,
+        generatedCode: 'es2015',
         entryFileNames: ssr
           ? `[name].js`
           : libOptions
           ? resolveLibFilename(libOptions, output.format || 'es', config.root)
           : path.posix.join(options.assetsDir, `[name].[hash].js`),
         chunkFileNames: libOptions
-          ? `[name].js`
+          ? `[name].[hash].js`
           : path.posix.join(options.assetsDir, `[name].[hash].js`),
         assetFileNames: libOptions
           ? `[name].[ext]`
@@ -441,7 +441,10 @@ async function doBuild(
         // #764 add `Symbol.toStringTag` when build es module into cjs chunk
         // #1048 add `Symbol.toStringTag` for module default export
         namespaceToStringTag: true,
-        inlineDynamicImports: ssr && typeof input === 'string',
+        inlineDynamicImports:
+          output.format === 'umd' ||
+          output.format === 'iife' ||
+          (ssr && typeof input === 'string'),
         ...output
       }
     }
@@ -467,7 +470,8 @@ async function doBuild(
       }
 
       const watcherOptions = config.build.watch
-      const watcher = rollup.watch({
+      const { watch } = await import('rollup')
+      const watcher = watch({
         ...rollupOptions,
         output,
         watch: {
@@ -503,7 +507,8 @@ async function doBuild(
     }
 
     // write or generate files with rollup
-    const bundle = await rollup.rollup(rollupOptions)
+    const { rollup } = await import('rollup')
+    const bundle = await rollup(rollupOptions)
     parallelBuilds.push(bundle)
 
     const generate = (output: OutputOptions = {}) => {
@@ -590,6 +595,10 @@ export function resolveLibFilename(
     extension = format === 'cjs' || format === 'umd' ? 'cjs' : 'js'
   } else {
     extension = format === 'es' ? 'mjs' : 'js'
+  }
+
+  if (format === 'cjs' || format === 'es') {
+    return `${name}.${extension}`
   }
 
   return `${name}.${format}.${extension}`

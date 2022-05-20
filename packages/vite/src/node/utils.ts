@@ -1,25 +1,25 @@
-import debug from 'debug'
-import colors from 'picocolors'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { createHash } from 'crypto'
 import { promisify } from 'util'
-import { pathToFileURL, URL } from 'url'
-import {
-  FS_PREFIX,
-  DEFAULT_EXTENSIONS,
-  VALID_ID_PREFIX,
-  CLIENT_PUBLIC_PATH,
-  ENV_PUBLIC_PATH,
-  CLIENT_ENTRY
-} from './constants'
-import resolve from 'resolve'
+import { URL, URLSearchParams, pathToFileURL } from 'url'
 import { builtinModules } from 'module'
+import { performance } from 'perf_hooks'
+import resolve from 'resolve'
 import type { FSWatcher } from 'chokidar'
 import remapping from '@ampproject/remapping'
 import type { DecodedSourceMap, RawSourceMap } from '@ampproject/remapping'
-import { performance } from 'perf_hooks'
-import { URLSearchParams } from 'url'
+import colors from 'picocolors'
+import debug from 'debug'
+import {
+  CLIENT_ENTRY,
+  CLIENT_PUBLIC_PATH,
+  DEFAULT_EXTENSIONS,
+  ENV_PUBLIC_PATH,
+  FS_PREFIX,
+  VALID_ID_PREFIX
+} from './constants'
 
 export function slash(p: string): string {
   return p.replace(/\\/g, '/')
@@ -278,6 +278,10 @@ export function injectQuery(url: string, queryToInject: string): string {
 const timestampRE = /\bt=\d{13}&?\b/
 export function removeTimestampQuery(url: string): string {
   return url.replace(timestampRE, '').replace(trailingSeparatorRE, '')
+}
+
+export function isRelativeBase(base: string): boolean {
+  return base === '' || base.startsWith('.')
 }
 
 export async function asyncReplace(
@@ -556,11 +560,16 @@ interface ImageCandidate {
 }
 const escapedSpaceCharacters = /( |\\t|\\n|\\f|\\r)+/g
 const imageSetUrlRE = /^(?:[\w\-]+\(.*?\)|'.*?'|".*?"|\S*)/
-export async function processSrcSet(
-  srcs: string,
-  replacer: (arg: ImageCandidate) => Promise<string>
-): Promise<string> {
-  const imageCandidates: ImageCandidate[] = splitSrcSet(srcs)
+function reduceSrcset(ret: { url: string; descriptor: string }[]) {
+  return ret.reduce((prev, { url, descriptor }, index) => {
+    descriptor ??= ''
+    return (prev +=
+      url + ` ${descriptor}${index === ret.length - 1 ? '' : ', '}`)
+  }, '')
+}
+
+function splitSrcSetDescriptor(srcs: string): ImageCandidate[] {
+  return splitSrcSet(srcs)
     .map((s) => {
       const src = s.replace(escapedSpaceCharacters, ' ').trim()
       const [url] = imageSetUrlRE.exec(src) || []
@@ -571,21 +580,30 @@ export async function processSrcSet(
       }
     })
     .filter(({ url }) => !!url)
+}
 
-  const ret = await Promise.all(
-    imageCandidates.map(async ({ url, descriptor }) => {
-      return {
-        url: await replacer({ url, descriptor }),
-        descriptor
-      }
-    })
+export function processSrcSet(
+  srcs: string,
+  replacer: (arg: ImageCandidate) => Promise<string>
+): Promise<string> {
+  return Promise.all(
+    splitSrcSetDescriptor(srcs).map(async ({ url, descriptor }) => ({
+      url: await replacer({ url, descriptor }),
+      descriptor
+    }))
+  ).then((ret) => reduceSrcset(ret))
+}
+
+export function processSrcSetSync(
+  srcs: string,
+  replacer: (arg: ImageCandidate) => string
+): string {
+  return reduceSrcset(
+    splitSrcSetDescriptor(srcs).map(({ url, descriptor }) => ({
+      url: replacer({ url, descriptor }),
+      descriptor
+    }))
   )
-
-  return ret.reduce((prev, { url, descriptor }, index) => {
-    descriptor ??= ''
-    return (prev +=
-      url + ` ${descriptor}${index === ret.length - 1 ? '' : ', '}`)
-  }, '')
 }
 
 function splitSrcSet(srcs: string) {
@@ -743,7 +761,9 @@ export const multilineCommentsRE = /\/\*(.|[\r\n])*?\*\//gm
 export const singlelineCommentsRE = /\/\/.*/g
 export const requestQuerySplitRE = /\?(?!.*[\/|\}])/
 
+// @ts-expect-error
 export const usingDynamicImport = typeof jest === 'undefined'
+
 /**
  * Dynamically import files. It will make sure it's not being compiled away by TS/Rollup.
  *
@@ -766,6 +786,10 @@ export function parseRequest(id: string): Record<string, string> | null {
 }
 
 export const blankReplacer = (match: string) => ' '.repeat(match.length)
+
+export function getHash(text: Buffer | string): string {
+  return createHash('sha256').update(text).digest('hex').substring(0, 8)
+}
 
 // Based on node-graceful-fs
 
