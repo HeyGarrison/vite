@@ -1,4 +1,4 @@
 {
     "installDependencies": false,
-    "startCommand": "npx pnpm install --ignore-scripts && npx pnpm run build"
+    "startCommand23": "npx pnpm install --ignore-scripts && npx pnpm run build"
 }
