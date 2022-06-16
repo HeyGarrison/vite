@@ -48,7 +48,6 @@ document.querySelector('.mxdjson').addEventListener('click', async () => {
 // data URLs (`blob:`)
 const code1 = 'export const msg = "blob"'
 const blob = new Blob([code1], { type: 'text/javascript;charset=UTF-8' })
-// eslint-disable-next-line node/no-unsupported-features/node-builtins
 const blobURL = URL.createObjectURL(blob)
 document.querySelector('.issue-2658-1').addEventListener('click', async () => {
   const { msg } = await import(/*@vite-ignore*/ blobURL)
@@ -79,16 +78,19 @@ function text(el, text) {
   document.querySelector(el).textContent = text
 }
 
-const base = 'hello'
+let base = 'hello'
 
 import(`../alias/${base}.js`).then((mod) => {
   text('.dynamic-import-with-vars', mod.hello())
 })
 
-import(`@/${base}.js`).then((mod) => {
-  text('.dynamic-import-with-vars-alias', mod.hello())
-})
-
 import(`../alias/${base}.js?raw`).then((mod) => {
   text('.dynamic-import-with-vars-raw', JSON.stringify(mod))
 })
+
+base = 'hi'
+import(`@/${base}.js`).then((mod) => {
+  text('.dynamic-import-with-vars-alias', mod.hi())
+})
+
+console.log('index.js')

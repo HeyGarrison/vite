@@ -71,6 +71,12 @@ test('should load dynamic import with css', async () => {
 describe.runIf(isBuild)('build', () => {
   test('should generate correct manifest', async () => {
     const manifest = readManifest()
+    // legacy polyfill
+    expect(manifest['../../vite/legacy-polyfills-legacy']).toBeDefined()
+    expect(manifest['../../vite/legacy-polyfills-legacy'].src).toBe(
+      '../../vite/legacy-polyfills-legacy'
+    )
+    // modern polyfill
     expect(manifest['../../vite/legacy-polyfills']).toBeDefined()
     expect(manifest['../../vite/legacy-polyfills'].src).toBe(
       '../../vite/legacy-polyfills'
@@ -98,5 +104,6 @@ describe.runIf(isBuild)('build', () => {
 
   test('includes structuredClone polyfill which is supported after core-js v3', () => {
     expect(findAssetFile(/polyfills-legacy/)).toMatch('"structuredClone"')
+    expect(findAssetFile(/polyfills\./)).toMatch('"structuredClone"')
   })
 })

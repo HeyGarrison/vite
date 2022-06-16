@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { createRequire } from 'module'
 import glob from 'fast-glob'
 import postcssrc from 'postcss-load-config'
 import type {
@@ -15,9 +16,7 @@ import colors from 'picocolors'
 import MagicString from 'magic-string'
 import type * as PostCSS from 'postcss'
 import type Sass from 'sass'
-// We need to disable check of extraneous import which is buggy for stylus,
-// and causes the CI tests fail, see: https://github.com/vitejs/vite/pull/2860
-import type Stylus from 'stylus' // eslint-disable-line node/no-extraneous-import
+import type Stylus from 'stylus'
 import type Less from 'less'
 import type { Alias } from 'types/alias'
 import { formatMessages, transform } from 'esbuild'
@@ -41,7 +40,8 @@ import {
   isRelativeBase,
   normalizePath,
   parseRequest,
-  processSrcSet
+  processSrcSet,
+  requireResolveFromRootWithFallback
 } from '../utils'
 import type { Logger } from '../logger'
 import { addToHTMLProxyTransformResult } from './html'
@@ -107,7 +107,6 @@ const htmlProxyRE = /(\?|&)html-proxy\b/
 const commonjsProxyRE = /\?commonjs-proxy/
 const inlineRE = /(\?|&)inline\b/
 const inlineCSSRE = /(\?|&)inline-css\b/
-const usedRE = /(\?|&)used\b/
 const varRE = /^var\(/i
 
 const cssBundleName = 'style.css'
@@ -405,18 +404,19 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
       }
 
       let code: string
-      if (usedRE.test(id)) {
-        if (modulesCode) {
-          code = modulesCode
-        } else {
-          let content = css
-          if (config.build.minify) {
-            content = await minifyCSS(content, config)
-          }
-          code = `export default ${JSON.stringify(content)}`
-        }
+      if (modulesCode) {
+        code = modulesCode
       } else {
-        code = `export default ''`
+        let content = css
+        if (config.build.minify) {
+          content = await minifyCSS(content, config)
+        }
+        // marking as pure to make it tree-shakable by minifier
+        // but the module itself is still treated as a non tree-shakable module
+        // because moduleSideEffects is 'no-treeshake'
+        code = `export default /* #__PURE__ */ (() => ${JSON.stringify(
+          content
+        )})()`
       }
 
       return {
@@ -559,8 +559,8 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
           .replace(/\./g, '\\.')
         const emptyChunkRE = new RegExp(
           opts.format === 'es' || opts.format === 'system'
-            ? `\\bimport\\s*"[^"]*(?:${emptyChunkFiles})";\n?`
-            : `\\brequire\\(\\s*"[^"]*(?:${emptyChunkFiles})"\\);\n?`,
+            ? `\\bimport\\s*["'][^"']*(?:${emptyChunkFiles})["'];\n?`
+            : `\\brequire\\(\\s*["'][^"']*(?:${emptyChunkFiles})["']\\);\n?`,
           'g'
         )
         for (const file in bundle) {
@@ -838,15 +838,19 @@ async function compileCSS(
       ...postcssOptions,
       to: id,
       from: id,
-      map: {
-        inline: false,
-        annotation: false,
-        // postcss may return virtual files
-        // we cannot obtain content of them, so this needs to be enabled
-        sourcesContent: true
-        // when "prev: preprocessorMap", the result map may include duplicate filename in `postcssResult.map.sources`
-        // prev: preprocessorMap,
-      }
+      ...(devSourcemap
+        ? {
+            map: {
+              inline: false,
+              annotation: false,
+              // postcss may return virtual files
+              // we cannot obtain content of them, so this needs to be enabled
+              sourcesContent: true
+              // when "prev: preprocessorMap", the result map may include duplicate filename in `postcssResult.map.sources`
+              // prev: preprocessorMap,
+            }
+          }
+        : {})
     })
 
   // record CSS dependencies from @imports
@@ -857,7 +861,9 @@ async function compileCSS(
       // https://github.com/postcss/postcss/blob/main/docs/guidelines/plugin.md#3-dependencies
       const { dir, glob: globPattern = '**' } = message
       const pattern =
-        normalizePath(path.resolve(path.dirname(id), dir)) + `/` + globPattern
+        glob.escapePath(normalizePath(path.resolve(path.dirname(id), dir))) +
+        `/` +
+        globPattern
       const files = glob.sync(pattern, {
         ignore: ['**/node_modules/**']
       })
@@ -888,7 +894,7 @@ async function compileCSS(
 
   const rawPostcssMap = postcssResult.map.toJSON()
 
-  const postcssMap = formatPostcssSourceMap(
+  const postcssMap = await formatPostcssSourceMap(
     // version property of rawPostcssMap is declared as string
     // but actually it is a number
     rawPostcssMap as Omit<RawSourceMap, 'version'> as ExistingRawSourceMap,
@@ -904,10 +910,10 @@ async function compileCSS(
   }
 }
 
-export function formatPostcssSourceMap(
+export async function formatPostcssSourceMap(
   rawMap: ExistingRawSourceMap,
   file: string
-): ExistingRawSourceMap {
+): Promise<ExistingRawSourceMap> {
   const inputFileDir = path.dirname(file)
 
   const sources = rawMap.sources.map((source) => {
@@ -1196,7 +1202,7 @@ async function minifyCSS(css: string, config: ResolvedConfig) {
   }
 }
 
-export async function hoistAtRules(css: string) {
+export async function hoistAtRules(css: string): Promise<string> {
   const s = new MagicString(css)
   const cleanCss = emptyCssComments(css)
   let match: RegExpExecArray | null
@@ -1278,6 +1284,9 @@ export interface StylePreprocessorResults {
 
 const loadedPreprocessors: Partial<Record<PreprocessLang, any>> = {}
 
+// TODO: use dynamic import
+const _require = createRequire(import.meta.url)
+
 function loadPreprocessor(lang: PreprocessLang.scss, root: string): typeof Sass
 function loadPreprocessor(lang: PreprocessLang.sass, root: string): typeof Sass
 function loadPreprocessor(lang: PreprocessLang.less, root: string): typeof Less
@@ -1290,11 +1299,8 @@ function loadPreprocessor(lang: PreprocessLang, root: string): any {
     return loadedPreprocessors[lang]
   }
   try {
-    // Search for the preprocessor in the root directory first, and fall back
-    // to the default require paths.
-    const fallbackPaths = require.resolve.paths?.(lang) || []
-    const resolved = require.resolve(lang, { paths: [root, ...fallbackPaths] })
-    return (loadedPreprocessors[lang] = require(resolved))
+    const resolved = requireResolveFromRootWithFallback(root, lang)
+    return (loadedPreprocessors[lang] = _require(resolved))
   } catch (e) {
     if (e.code === 'MODULE_NOT_FOUND') {
       throw new Error(

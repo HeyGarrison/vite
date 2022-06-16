@@ -1,5 +1,5 @@
 import { isAbsolute, posix } from 'path'
-import { isMatch, scan } from 'micromatch'
+import micromatch from 'micromatch'
 import { stripLiteral } from 'strip-literal'
 import type {
   ArrayExpression,
@@ -17,8 +17,9 @@ import type { Plugin } from '../plugin'
 import type { ViteDevServer } from '../server'
 import type { ModuleNode } from '../server/moduleGraph'
 import type { ResolvedConfig } from '../config'
-import { normalizePath, slash } from '../utils'
-import { isCSSRequest } from './css'
+import { normalizePath, slash, transformResult } from '../utils'
+
+const { isMatch, scan } = micromatch
 
 export interface ParsedImportGlob {
   match: RegExpMatchArray
@@ -32,7 +33,10 @@ export interface ParsedImportGlob {
   end: number
 }
 
-export function getAffectedGlobModules(file: string, server: ViteDevServer) {
+export function getAffectedGlobModules(
+  file: string,
+  server: ViteDevServer
+): ModuleNode[] {
   const modules: ModuleNode[] = []
   for (const [id, allGlobs] of server._importGlobMap!) {
     if (allGlobs.some((glob) => isMatch(file, glob)))
@@ -71,10 +75,7 @@ export function importGlobPlugin(config: ResolvedConfig): Plugin {
             server!.watcher.add(dirname(file))
           })
         }
-        return {
-          code: result.s.toString(),
-          map: result.s.generateMap()
-        }
+        return transformResult(result.s, id, config)
       }
     }
   }
@@ -391,9 +392,6 @@ export async function transformGlobImport(
             let importPath = paths.importPath
             let importQuery = query
 
-            if (isCSSRequest(file))
-              importQuery = importQuery ? `${importQuery}&used` : '?used'
-
             if (importQuery && importQuery !== '?raw') {
               const fileExtension = basename(file).split('.').slice(-1)[0]
               if (fileExtension && restoreQueryExtension)
@@ -503,7 +501,7 @@ export function getCommonBase(globsResolved: string[]): null | string {
   return commonAncestor
 }
 
-export function isVirtualModule(id: string) {
+export function isVirtualModule(id: string): boolean {
   // https://vitejs.dev/guide/api-plugin.html#virtual-modules-convention
   return id.startsWith('virtual:') || id.startsWith('\0') || !id.includes('/')
 }

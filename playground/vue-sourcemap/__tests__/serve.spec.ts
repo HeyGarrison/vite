@@ -15,36 +15,14 @@ describe.runIf(isServe)('serve:vue-sourcemap', () => {
         return text
       }
     }
-    throw new Error('Not found')
+    throw new Error('Style not found: ' + content)
   }
 
   test('js', async () => {
     const res = await page.request.get(new URL('./Js.vue', page.url()).href)
     const js = await res.text()
     const map = extractSourcemap(js)
-    expect(formatSourcemapForSnapshot(map)).toMatchInlineSnapshot(`
-      {
-        "mappings": "AAKA,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;;;;;AAGP;AACd,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;;;;;;;;;;;wBARlB,oBAAiB,WAAd,MAAU",
-        "sources": [
-          "/root/Js.vue",
-        ],
-        "sourcesContent": [
-          "<template>
-        <p>&lt;js&gt;</p>
-      </template>
-
-      <script>
-      console.log('script')
-      </script>
-
-      <script setup>
-      console.log('setup')
-      </script>
-      ",
-        ],
-        "version": 3,
-      }
-    `)
+    expect(formatSourcemapForSnapshot(map)).toMatchSnapshot()
   })
 
   test('ts', async () => {
@@ -53,7 +31,7 @@ describe.runIf(isServe)('serve:vue-sourcemap', () => {
     const map = extractSourcemap(js)
     expect(formatSourcemapForSnapshot(map)).toMatchInlineSnapshot(`
       {
-        "mappings": ";AAKA,QAAQ,IAAI,WAAW;;;;AAIvB,YAAQ,IAAI,UAAU;;;;;;;;uBARpB,oBAAiB,WAAd,MAAU",
+        "mappings": ";AAKA,QAAQ,IAAI,WAAW;;;;;AAIvB,YAAQ,IAAI,UAAU;;;;;;;;uBARpB,oBAAiB,WAAd,MAAU",
         "sources": [
           "/root/Ts.vue",
         ],
@@ -350,6 +328,56 @@ describe.runIf(isServe)('serve:vue-sourcemap', () => {
 
       .src-import-sass
         color: red
+      ",
+        ],
+        "version": 3,
+      }
+    `)
+  })
+
+  test('no script', async () => {
+    const res = await page.request.get(
+      new URL('./NoScript.vue', page.url()).href
+    )
+    const js = await res.text()
+    const map = extractSourcemap(js)
+    expect(formatSourcemapForSnapshot(map)).toMatchInlineSnapshot(`
+      {
+        "mappings": ";;;wBACE",
+        "sources": [
+          "/root/NoScript.vue",
+        ],
+        "sourcesContent": [
+          "<template>
+        <p>&lt;no-script&gt;</p>
+      </template>
+      ",
+        ],
+        "version": 3,
+      }
+    `)
+  })
+
+  test('no template', async () => {
+    const res = await page.request.get(
+      new URL('./NoTemplate.vue', page.url()).href
+    )
+    const js = await res.text()
+    const map = extractSourcemap(js)
+    expect(formatSourcemapForSnapshot(map)).toMatchInlineSnapshot(`
+      {
+        "mappings": "2IACA,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;;;;;;AAGP;AACd,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC",
+        "sources": [
+          "/root/NoTemplate.vue",
+        ],
+        "sourcesContent": [
+          "<script>
+      console.log('script')
+      </script>
+
+      <script setup>
+      console.log('setup')
+      </script>
       ",
         ],
         "version": 3,
