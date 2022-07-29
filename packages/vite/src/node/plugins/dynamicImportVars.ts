@@ -1,4 +1,4 @@
-import { posix } from 'path'
+import { posix } from 'node:path'
 import MagicString from 'magic-string'
 import { init, parse as parseImports } from 'es-module-lexer'
 import type { ImportSpecifier } from 'es-module-lexer'
@@ -10,8 +10,9 @@ import {
   createFilter,
   normalizePath,
   parseRequest,
+  removeComments,
   requestQuerySplitRE,
-  transformResult
+  transformStableResult
 } from '../utils'
 
 export const dynamicImportHelperId = '/@vite/dynamic-import-helper'
@@ -176,11 +177,13 @@ export function dynamicImportVarsPlugin(config: ResolvedConfig): Plugin {
         s ||= new MagicString(source)
         let result
         try {
-          result = await transformDynamicImport(
-            source.slice(start, end),
-            importer,
-            resolve
-          )
+          // When import string is using backticks, es-module-lexer `end` captures
+          // until the closing parenthesis, instead of the closing backtick.
+          // There may be inline comments between the backtick and the closing
+          // parenthesis, so we manually remove them for now.
+          // See https://github.com/guybedford/es-module-lexer/issues/118
+          const importSource = removeComments(source.slice(start, end)).trim()
+          result = await transformDynamicImport(importSource, importer, resolve)
         } catch (error) {
           if (warnOnError) {
             this.warn(error)
@@ -209,7 +212,7 @@ export function dynamicImportVarsPlugin(config: ResolvedConfig): Plugin {
             `import __variableDynamicImportRuntimeHelper from "${dynamicImportHelperId}";`
           )
         }
-        return transformResult(s, importer, config)
+        return transformStableResult(s, importer, config)
       }
     }
   }

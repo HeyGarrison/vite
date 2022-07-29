@@ -72,3 +72,39 @@ test('msg from only object assigned exports', async () => {
     'Hello World!'
   )
 })
+
+test('msg from no external cjs', async () => {
+  await page.goto(url)
+  expect(await page.textContent('.no-external-cjs-msg')).toMatch('Hello World!')
+})
+
+test('msg from optimized with nested external', async () => {
+  await page.goto(url)
+  expect(await page.textContent('.optimized-with-nested-external')).toMatch(
+    'Hello World!'
+  )
+})
+
+test('msg from optimized cjs with nested external', async () => {
+  await page.goto(url)
+  expect(await page.textContent('.optimized-cjs-with-nested-external')).toMatch(
+    'Hello World!'
+  )
+})
+
+test('msg from external using external entry', async () => {
+  await page.goto(url)
+  expect(await page.textContent('.external-using-external-entry')).toMatch(
+    'Hello World!'
+  )
+})
+
+test('msg from linked no external', async () => {
+  await page.goto(url)
+  expect(await page.textContent('.linked-no-external')).toMatch('Hello World!')
+})
+
+test('msg from linked no external', async () => {
+  await page.goto(url)
+  expect(await page.textContent('.dep-virtual')).toMatch('[success]')
+})

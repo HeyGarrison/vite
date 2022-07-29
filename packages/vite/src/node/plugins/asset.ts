@@ -1,12 +1,13 @@
-import path from 'path'
-import { parse as parseUrl } from 'url'
-import fs, { promises as fsp } from 'fs'
+import path from 'node:path'
+import { parse as parseUrl } from 'node:url'
+import fs, { promises as fsp } from 'node:fs'
 import * as mrmime from 'mrmime'
-import type { OutputOptions, PluginContext } from 'rollup'
+import type { OutputOptions, PluginContext, PreRenderedAsset } from 'rollup'
 import MagicString from 'magic-string'
+import { toOutputFilePathInString } from '../build'
 import type { Plugin } from '../plugin'
 import type { ResolvedConfig } from '../config'
-import { cleanUrl, getHash, isRelativeBase, normalizePath } from '../utils'
+import { cleanUrl, getHash, normalizePath } from '../utils'
 import { FS_PREFIX } from '../constants'
 
 export const assetUrlRE = /__VITE_ASSET__([a-z\d]{8})__(?:\$_(.*?)__)?/g
@@ -41,7 +42,6 @@ export function registerCustomMime(): void {
 export function assetPlugin(config: ResolvedConfig): Plugin {
   // assetHashToFilenameMap initialization in buildStart causes getAssetFilename to return undefined
   assetHashToFilenameMap.set(config, new Map())
-  const relativeBase = isRelativeBase(config.base)
 
   registerCustomMime()
 
@@ -94,11 +94,6 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
       let match: RegExpExecArray | null
       let s: MagicString | undefined
 
-      const absoluteUrlPathInterpolation = (filename: string) =>
-        `"+new URL(${JSON.stringify(
-          path.posix.relative(path.dirname(chunk.fileName), filename)
-        )},import.meta.url).href+"`
-
       // Urls added with JS using e.g.
       // imgElement.src = "__VITE_ASSET__5aa0ddc0__" are using quotes
 
@@ -115,27 +110,43 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
         const file = getAssetFilename(hash, config) || this.getFileName(hash)
         chunk.viteMetadata.importedAssets.add(cleanUrl(file))
         const filename = file + postfix
-        const outputFilepath = relativeBase
-          ? absoluteUrlPathInterpolation(filename)
-          : JSON.stringify(config.base + filename).slice(1, -1)
-        s.overwrite(match.index, match.index + full.length, outputFilepath, {
+        const replacement = toOutputFilePathInString(
+          filename,
+          'asset',
+          chunk.fileName,
+          'js',
+          config
+        )
+        const replacementString =
+          typeof replacement === 'string'
+            ? JSON.stringify(replacement).slice(1, -1)
+            : `"+${replacement.runtime}+"`
+        s.overwrite(match.index, match.index + full.length, replacementString, {
           contentOnly: true
         })
       }
 
       // Replace __VITE_PUBLIC_ASSET__5aa0ddc0__ with absolute paths
 
-      if (relativeBase) {
-        const publicAssetUrlMap = publicAssetUrlCache.get(config)!
-        while ((match = publicAssetUrlRE.exec(code))) {
-          s = s || (s = new MagicString(code))
-          const [full, hash] = match
-          const publicUrl = publicAssetUrlMap.get(hash)!
-          const replacement = absoluteUrlPathInterpolation(publicUrl.slice(1))
-          s.overwrite(match.index, match.index + full.length, replacement, {
-            contentOnly: true
-          })
-        }
+      const publicAssetUrlMap = publicAssetUrlCache.get(config)!
+      while ((match = publicAssetUrlRE.exec(code))) {
+        s = s || (s = new MagicString(code))
+        const [full, hash] = match
+        const publicUrl = publicAssetUrlMap.get(hash)!.slice(1)
+        const replacement = toOutputFilePathInString(
+          publicUrl,
+          'public',
+          chunk.fileName,
+          'js',
+          config
+        )
+        const replacementString =
+          typeof replacement === 'string'
+            ? JSON.stringify(replacement).slice(1, -1)
+            : `"+${replacement.runtime}+"`
+        s.overwrite(match.index, match.index + full.length, replacementString, {
+          contentOnly: true
+        })
       }
 
       if (s) {
@@ -207,7 +218,8 @@ function fileToDevUrl(id: string, config: ResolvedConfig) {
     rtn = path.posix.join(FS_PREFIX + id)
   }
   const origin = config.server?.origin ?? ''
-  return origin + config.base + rtn.replace(/^\//, '')
+  const devBase = config.base
+  return origin + devBase + rtn.replace(/^\//, '')
 }
 
 export function getAssetFilename(
@@ -215,6 +227,34 @@ export function getAssetFilename(
   config: ResolvedConfig
 ): string | undefined {
   return assetHashToFilenameMap.get(config)?.get(hash)
+}
+
+export function getPublicAssetFilename(
+  hash: string,
+  config: ResolvedConfig
+): string | undefined {
+  return publicAssetUrlCache.get(config)?.get(hash)
+}
+
+export function resolveAssetFileNames(
+  config: ResolvedConfig
+): string | ((chunkInfo: PreRenderedAsset) => string) {
+  const output = config.build?.rollupOptions?.output
+  const defaultAssetFileNames = path.posix.join(
+    config.build.assetsDir,
+    '[name].[hash][extname]'
+  )
+  // Steps to determine which assetFileNames will be actually used.
+  // First, if output is an object or string, use assetFileNames in it.
+  // And a default assetFileNames as fallback.
+  let assetFileNames: Exclude<OutputOptions['assetFileNames'], undefined> =
+    (output && !Array.isArray(output) ? output.assetFileNames : undefined) ??
+    defaultAssetFileNames
+  if (output && Array.isArray(output)) {
+    // Second, if output is an array, adopt assetFileNames in the first object.
+    assetFileNames = output[0].assetFileNames ?? assetFileNames
+  }
+  return assetFileNames
 }
 
 /**
@@ -305,7 +345,8 @@ export function publicFileToBuiltUrl(
   url: string,
   config: ResolvedConfig
 ): string {
-  if (!isRelativeBase(config.base)) {
+  if (config.command !== 'build') {
+    // We don't need relative base or renderBuiltUrl support during dev
     return config.base + url.slice(1)
   }
   const hash = getHash(url)
@@ -347,6 +388,7 @@ async function fileToBuiltUrl(
   if (
     config.build.lib ||
     (!file.endsWith('.svg') &&
+      !file.endsWith('.html') &&
       content.length < Number(config.build.assetsInlineLimit))
   ) {
     const mimeType = mrmime.lookup(file) ?? 'application/octet-stream'
@@ -364,25 +406,9 @@ async function fileToBuiltUrl(
     const contentHash = getHash(content)
     const { search, hash } = parseUrl(id)
     const postfix = (search || '') + (hash || '')
-    const output = config.build?.rollupOptions?.output
-
-    const defaultAssetFileNames = path.posix.join(
-      config.build.assetsDir,
-      '[name].[hash][extname]'
-    )
-    // Steps to determine which assetFileNames will be actually used.
-    // First, if output is an object or string, use assetFileNames in it.
-    // And a default assetFileNames as fallback.
-    let assetFileNames: Exclude<OutputOptions['assetFileNames'], undefined> =
-      (output && !Array.isArray(output) ? output.assetFileNames : undefined) ??
-      defaultAssetFileNames
-    if (output && Array.isArray(output)) {
-      // Second, if output is an array, adopt assetFileNames in the first object.
-      assetFileNames = output[0].assetFileNames ?? assetFileNames
-    }
 
     const fileName = assetFileNamesToFileName(
-      assetFileNames,
+      resolveAssetFileNames(config),
       file,
       contentHash,
       content
@@ -402,7 +428,7 @@ async function fileToBuiltUrl(
       emittedSet.add(contentHash)
     }
 
-    url = `__VITE_ASSET__${contentHash}__${postfix ? `$_${postfix}__` : ``}`
+    url = `__VITE_ASSET__${contentHash}__${postfix ? `$_${postfix}__` : ``}` // TODO_BASE
   }
 
   cache.set(id, url)

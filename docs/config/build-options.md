@@ -6,7 +6,7 @@
 - **Default:** `'modules'`
 - **Related:** [Browser Compatibility](/guide/build#browser-compatibility)
 
-Browser compatibility target for the final bundle. The default value is a Vite special value, `'modules'`, which targets browsers with [native ES Modules](https://caniuse.com/es6-module) and [native ESM dynamic import](https://caniuse.com/es6-module-dynamic-import) support.
+Browser compatibility target for the final bundle. The default value is a Vite special value, `'modules'`, which targets browsers with [native ES Modules](https://caniuse.com/es6-module), [native ESM dynamic import](https://caniuse.com/es6-module-dynamic-import), and [`import.meta`](https://caniuse.com/mdn-javascript_operators_import_meta) support.
 
 Another special value is `'esnext'` - which assumes native dynamic imports support and will transpile as little as possible:
 
@@ -73,7 +73,7 @@ If you specify `build.lib`, `build.cssCodeSplit` will be `false` as default.
 ## build.cssTarget
 
 - **Type:** `string | string[]`
-- **Default:** the same as [`build.target`](/config/#build-target)
+- **Default:** the same as [`build.target`](#build-target)
 
 This options allows users to set a different browser target for CSS minification from the one used for JavaScript transpilation.
 
@@ -145,7 +145,7 @@ Produce SSR-oriented build. The value can be a string to directly specify the SS
 
 Set to `false` to disable minification, or specify the minifier to use. The default is [esbuild](https://github.com/evanw/esbuild) which is 20 ~ 40x faster than terser and only 1 ~ 2% worse compression. [Benchmarks](https://github.com/privatenumber/minification-benchmarks)
 
-Note the `build.minify` option is not available when using the `'es'` format in lib mode.
+Note the `build.minify` option does not minify whitespaces when using the `'es'` format in lib mode, as it removes pure annotations and break tree-shaking.
 
 Terser must be installed when it is set to `'terser'`.
 
@@ -180,12 +180,12 @@ By default, Vite will empty the `outDir` on build if it is inside project root. 
 
 Enable/disable gzip-compressed size reporting. Compressing large output files can be slow, so disabling this may increase build performance for large projects.
 
-### build.chunkSizeWarningLimit
+## build.chunkSizeWarningLimit
 
 - **Type:** `number`
 - **Default:** `500`
 
-  Limit for chunk size warnings (in kbs).
+Limit for chunk size warnings (in kbs).
 
 ## build.watch
 

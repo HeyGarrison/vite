@@ -60,12 +60,7 @@ test('correctly emits styles', async () => {
 // dynamic import css
 test('should load dynamic import with css', async () => {
   await page.click('#dynamic-css-button')
-  await untilUpdated(
-    () =>
-      page.$eval('#dynamic-css', (node) => window.getComputedStyle(node).color),
-    'rgb(255, 0, 0)',
-    true
-  )
+  await untilUpdated(() => getColor('#dynamic-css'), 'red', true)
 })
 
 describe.runIf(isBuild)('build', () => {
@@ -86,7 +81,7 @@ describe.runIf(isBuild)('build', () => {
   test('should minify legacy chunks with terser', async () => {
     // This is a ghetto heuristic, but terser output seems to reliably start
     // with one of the following, and non-terser output (including unminified or
-    // ebuild-minified) does not!
+    // esbuild-minified) does not!
     const terserPattern = /^(?:!function|System.register)/
 
     expect(findAssetFile(/chunk-async-legacy/)).toMatch(terserPattern)
