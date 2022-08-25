@@ -1,4 +1,9 @@
 {
     "installDependencies": false,
-    "startCommand": "pnpm install && pnpm run dev"
+    "startCommand": "pnpm install && pnpm run docs",
+    "publisherStartCommand": "pnpm run docs"
+    "publisher": {
+        "startCommand": "pnpm run docs"
+    }
+
 }

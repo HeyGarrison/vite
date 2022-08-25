@@ -77,7 +77,7 @@ export default defineConfig({
     logo: '/logo.svg',
 
     editLink: {
-      pattern: 'https://github.com/vitejs/vite/edit/main/docs/:path',
+      pattern: 'https://stackblitz.com/vitejs/vite/blob/main/docs/:path',
       text: 'Suggest changes to this page'
     },
 
