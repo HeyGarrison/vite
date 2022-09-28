@@ -125,6 +125,7 @@ export async function resolveHttpsConfig(
   cacheDir: string
 ): Promise<HttpsServerOptions | undefined> {
   if (!https) return undefined
+  console.log(123)
 
   const httpsOption = isObject(https) ? { ...https } : {}
 
