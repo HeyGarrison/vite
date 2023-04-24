@@ -1,0 +1,3 @@
+{
+  "startCommand": "cd .. && pnpm run docs"
+}
